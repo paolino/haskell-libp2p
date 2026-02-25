@@ -6,7 +6,7 @@ License     : Apache-2.0
 -}
 module Libp2p.Node
     ( -- * Node handle
-      Node
+      Node (..)
 
       -- * Lifecycle
     , withNode
@@ -17,8 +17,7 @@ module Libp2p.Node
     , dial
     ) where
 
-import Control.Exception (bracket, throwIO)
-import Data.Text (Text)
+import Control.Exception (throwIO)
 import Data.Text qualified as T
 import Foreign.C.String (peekCString, withCString)
 import Foreign.ForeignPtr
@@ -26,12 +25,11 @@ import Foreign.ForeignPtr
     , newForeignPtr
     , withForeignPtr
     )
-import Foreign.Ptr (Ptr, nullPtr)
+import Foreign.Ptr (nullPtr)
 
 import Libp2p.FFI qualified as FFI
 import Libp2p.Types
-    ( Libp2pError (..)
-    , Multiaddr (..)
+    ( Multiaddr (..)
     , PeerId (..)
     )
 
@@ -39,22 +37,22 @@ import Libp2p.Types
 newtype Node = Node (ForeignPtr FFI.NodeHandle)
 
 -- | Get the last error from the FFI layer.
-getLastError :: IO Text
+getLastError :: IO String
 getLastError = do
     cstr <- FFI.c_last_error
     if cstr == nullPtr
         then pure "Unknown error"
-        else T.pack <$> peekCString cstr
+        else peekCString cstr
 
 -- | Check return code and throw on failure.
 checkRC :: IO Int -> IO ()
 checkRC action = do
-    rc <- fromIntegral <$> action
+    rc <- action
     if rc == 0
         then pure ()
         else do
             err <- getLastError
-            throwIO $ userError $ T.unpack err
+            throwIO $ userError err
 
 -- | Create a node, run an action, then free it.
 withNode :: (Node -> IO a) -> IO a
@@ -66,7 +64,7 @@ withNode f = do
             throwIO
                 $ userError
                 $ "Failed to create node: "
-                <> T.unpack err
+                <> err
         else do
             fp <-
                 newForeignPtr
@@ -94,11 +92,15 @@ listen :: Node -> Multiaddr -> IO ()
 listen (Node fp) (Multiaddr addr) =
     withForeignPtr fp $ \ptr ->
         withCString (T.unpack addr) $ \caddr ->
-            checkRC $ FFI.c_node_listen ptr caddr
+            checkRC
+                $ fromIntegral
+                <$> FFI.c_node_listen ptr caddr
 
 -- | Dial a remote peer at a multiaddress.
 dial :: Node -> Multiaddr -> IO ()
 dial (Node fp) (Multiaddr addr) =
     withForeignPtr fp $ \ptr ->
         withCString (T.unpack addr) $ \caddr ->
-            checkRC $ FFI.c_node_dial ptr caddr
+            checkRC
+                $ fromIntegral
+                <$> FFI.c_node_dial ptr caddr

@@ -2,20 +2,25 @@
 //
 // Architecture: One global tokio runtime (LazyLock). Each Node owns
 // an mpsc::Sender<Command>. C FFI functions send commands and block
-// on a oneshot reply channel.
+// on a oneshot reply channel. Incoming protocol streams are pushed
+// to per-protocol queues that Haskell polls from its own thread.
 
 #![allow(clippy::missing_safety_doc)]
 
+use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
-use std::sync::LazyLock;
+use std::sync::{LazyLock, Mutex};
 
+use futures::io::{AsyncReadExt, AsyncWriteExt};
 use futures::StreamExt;
 use libp2p::{
     identify, noise, tcp,
     swarm::{NetworkBehaviour, SwarmEvent},
-    yamux, Multiaddr, Swarm, SwarmBuilder,
+    yamux, Multiaddr, PeerId, Stream,
+    StreamProtocol, Swarm, SwarmBuilder,
 };
+use libp2p_stream as stream;
 use tokio::runtime::Runtime;
 use tokio::sync::{mpsc, oneshot};
 
@@ -42,6 +47,7 @@ fn set_last_error(msg: &str) {
 #[derive(NetworkBehaviour)]
 struct NodeBehaviour {
     identify: identify::Behaviour,
+    stream: stream::Behaviour,
 }
 
 // ── Commands ───────────────────────────────────────────────
@@ -57,19 +63,123 @@ enum Command {
     },
 }
 
+// ── Stream wrapper ─────────────────────────────────────────
+
+/// Opaque stream handle for C FFI.
+/// Wraps a libp2p Stream with read/write via tokio channels.
+pub struct LibP2PStream {
+    /// Channel to request reads (sends back data).
+    read_tx: mpsc::Sender<ReadRequest>,
+    /// Channel to send write data.
+    write_tx: mpsc::Sender<WriteRequest>,
+}
+
+struct ReadRequest {
+    max_len: usize,
+    reply: oneshot::Sender<Result<Vec<u8>, String>>,
+}
+
+struct WriteRequest {
+    data: Vec<u8>,
+    reply: oneshot::Sender<Result<(), String>>,
+}
+
+/// Spawn a task that bridges sync FFI calls to async stream I/O.
+fn spawn_stream_bridge(
+    stream: Stream,
+) -> Box<LibP2PStream> {
+    let (read_tx, mut read_rx) =
+        mpsc::channel::<ReadRequest>(16);
+    let (write_tx, mut write_rx) =
+        mpsc::channel::<WriteRequest>(16);
+
+    RUNTIME.spawn(async move {
+        let (mut reader, mut writer) = stream.split();
+
+        // Use select to handle both read and write requests
+        loop {
+            tokio::select! {
+                req = read_rx.recv() => {
+                    match req {
+                        Some(ReadRequest {
+                            max_len, reply
+                        }) => {
+                            let mut buf =
+                                vec![0u8; max_len];
+                            match reader
+                                .read(&mut buf)
+                                .await
+                            {
+                                Ok(0) => {
+                                    let _ = reply
+                                        .send(Ok(vec![]));
+                                }
+                                Ok(n) => {
+                                    buf.truncate(n);
+                                    let _ = reply
+                                        .send(Ok(buf));
+                                }
+                                Err(e) => {
+                                    let _ = reply.send(
+                                        Err(format!(
+                                            "Read error: \
+                                             {e}"
+                                        )),
+                                    );
+                                }
+                            }
+                        }
+                        None => break,
+                    }
+                }
+                req = write_rx.recv() => {
+                    match req {
+                        Some(WriteRequest {
+                            data, reply
+                        }) => {
+                            match writer
+                                .write_all(&data)
+                                .await
+                            {
+                                Ok(()) => {
+                                    let _ = writer
+                                        .flush()
+                                        .await;
+                                    let _ =
+                                        reply.send(Ok(()));
+                                }
+                                Err(e) => {
+                                    let _ = reply.send(
+                                        Err(format!(
+                                            "Write error: \
+                                             {e}"
+                                        )),
+                                    );
+                                }
+                            }
+                        }
+                        None => break,
+                    }
+                }
+            }
+        }
+    });
+
+    Box::new(LibP2PStream { read_tx, write_tx })
+}
+
 // ── Node ───────────────────────────────────────────────────
 
 /// Opaque node handle for C FFI.
 pub struct LibP2PNode {
     peer_id: CString,
     cmd_tx: mpsc::Sender<Command>,
-}
-
-// ── Stream (placeholder for step 3) ───────────────────────
-
-/// Opaque stream handle for C FFI.
-pub struct LibP2PStream {
-    _placeholder: u8,
+    /// Stream control for opening outbound streams.
+    control: Mutex<stream::Control>,
+    /// Per-protocol incoming stream queues.
+    incoming: Mutex<
+        HashMap<String, mpsc::Receiver<Box<LibP2PStream>>>,
+    >,
 }
 
 // ── C API: Node lifecycle ──────────────────────────────────
@@ -79,6 +189,9 @@ pub struct LibP2PStream {
 pub extern "C" fn libp2p_node_new() -> *mut LibP2PNode {
     let result: Result<Box<LibP2PNode>, String> =
         RUNTIME.block_on(async {
+            let stream_behaviour = stream::Behaviour::new();
+            let control = stream_behaviour.new_control();
+
             let swarm = SwarmBuilder::with_new_identity()
                 .with_tokio()
                 .with_tcp(
@@ -95,7 +208,9 @@ pub extern "C" fn libp2p_node_new() -> *mut LibP2PNode {
                 )
                 .await
                 .map_err(|e| {
-                    format!("Failed to build WebSocket: {e}")
+                    format!(
+                        "Failed to build WebSocket: {e}"
+                    )
                 })?
                 .with_behaviour(|key| NodeBehaviour {
                     identify: identify::Behaviour::new(
@@ -105,9 +220,12 @@ pub extern "C" fn libp2p_node_new() -> *mut LibP2PNode {
                             key.public(),
                         ),
                     ),
+                    stream: stream_behaviour,
                 })
                 .map_err(|e| {
-                    format!("Failed to build behaviour: {e}")
+                    format!(
+                        "Failed to build behaviour: {e}"
+                    )
                 })?
                 .build();
 
@@ -122,12 +240,13 @@ pub extern "C" fn libp2p_node_new() -> *mut LibP2PNode {
 
             let (cmd_tx, cmd_rx) = mpsc::channel(64);
 
-            // Spawn the swarm event loop
             RUNTIME.spawn(run_swarm(swarm, cmd_rx));
 
             Ok(Box::new(LibP2PNode {
                 peer_id: peer_id_str,
                 cmd_tx,
+                control: Mutex::new(control),
+                incoming: Mutex::new(HashMap::new()),
             }))
         });
 
@@ -151,7 +270,6 @@ pub unsafe extern "C" fn libp2p_node_free(
 }
 
 /// Get the PeerId as a null-terminated string.
-/// Valid until the node is freed.
 #[no_mangle]
 pub unsafe extern "C" fn libp2p_node_peer_id(
     node: *const LibP2PNode,
@@ -191,18 +309,20 @@ pub unsafe extern "C" fn libp2p_node_listen(
     };
 
     let (reply_tx, reply_rx) = oneshot::channel();
-    let cmd = Command::Listen {
-        addr,
-        reply: reply_tx,
-    };
-
-    if (*node).cmd_tx.blocking_send(cmd).is_err() {
+    if (*node)
+        .cmd_tx
+        .blocking_send(Command::Listen {
+            addr,
+            reply: reply_tx,
+        })
+        .is_err()
+    {
         set_last_error("Node event loop has stopped");
         return -1;
     }
 
     match RUNTIME.block_on(async { reply_rx.await }) {
-        Ok(Ok(_actual_addr)) => 0,
+        Ok(Ok(_)) => 0,
         Ok(Err(e)) => {
             set_last_error(&e);
             -1
@@ -243,12 +363,14 @@ pub unsafe extern "C" fn libp2p_node_dial(
     };
 
     let (reply_tx, reply_rx) = oneshot::channel();
-    let cmd = Command::Dial {
-        addr,
-        reply: reply_tx,
-    };
-
-    if (*node).cmd_tx.blocking_send(cmd).is_err() {
+    if (*node)
+        .cmd_tx
+        .blocking_send(Command::Dial {
+            addr,
+            reply: reply_tx,
+        })
+        .is_err()
+    {
         set_last_error("Node event loop has stopped");
         return -1;
     }
@@ -266,35 +388,334 @@ pub unsafe extern "C" fn libp2p_node_dial(
     }
 }
 
-// ── C API: Streams (placeholder) ───────────────────────────
+// ── C API: Protocol registration ───────────────────────────
 
-/// Read from stream. Returns bytes read, 0=EOF, -1=error.
+/// Register a protocol handler. Incoming streams for this
+/// protocol are queued and can be polled with
+/// `libp2p_node_accept_stream`.
+/// Returns 0 on success, -1 on failure.
+#[no_mangle]
+pub unsafe extern "C" fn libp2p_node_register_protocol(
+    node: *mut LibP2PNode,
+    protocol_id: *const c_char,
+) -> i32 {
+    if node.is_null() || protocol_id.is_null() {
+        set_last_error("null pointer argument");
+        return -1;
+    }
+    let proto_str =
+        match CStr::from_ptr(protocol_id).to_str() {
+            Ok(s) => s.to_string(),
+            Err(e) => {
+                set_last_error(&format!(
+                    "Invalid UTF-8: {e}"
+                ));
+                return -1;
+            }
+        };
+
+    let protocol =
+        StreamProtocol::try_from_owned(proto_str.clone())
+            .map_err(|e| format!("Invalid protocol: {e}"));
+    let protocol = match protocol {
+        Ok(p) => p,
+        Err(e) => {
+            set_last_error(&e);
+            return -1;
+        }
+    };
+
+    let node_ref = &*node;
+    let mut control = node_ref.control.lock().unwrap();
+
+    // Accept incoming streams for this protocol
+    let mut incoming_streams =
+        control.accept(protocol).unwrap();
+
+    // Create a channel for Haskell to poll
+    let (tx, rx) =
+        mpsc::channel::<Box<LibP2PStream>>(64);
+
+    node_ref
+        .incoming
+        .lock()
+        .unwrap()
+        .insert(proto_str.clone(), rx);
+
+    // Spawn a task that accepts incoming streams and
+    // wraps them for FFI
+    RUNTIME.spawn(async move {
+        while let Some((peer_id, stream)) =
+            incoming_streams.next().await
+        {
+            log::info!(
+                "Incoming stream from {peer_id} \
+                 on {proto_str}"
+            );
+            let wrapped = spawn_stream_bridge(stream);
+            if tx.send(wrapped).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    0
+}
+
+/// Poll for an incoming stream on the given protocol.
+/// Returns null if no stream is available (non-blocking).
+/// The caller must free the returned stream with
+/// `libp2p_stream_free`.
+#[no_mangle]
+pub unsafe extern "C" fn libp2p_node_accept_stream(
+    node: *mut LibP2PNode,
+    protocol_id: *const c_char,
+) -> *mut LibP2PStream {
+    if node.is_null() || protocol_id.is_null() {
+        set_last_error("null pointer argument");
+        return std::ptr::null_mut();
+    }
+    let proto_str =
+        match CStr::from_ptr(protocol_id).to_str() {
+            Ok(s) => s,
+            Err(e) => {
+                set_last_error(&format!(
+                    "Invalid UTF-8: {e}"
+                ));
+                return std::ptr::null_mut();
+            }
+        };
+
+    let node_ref = &*node;
+    let mut incoming = node_ref.incoming.lock().unwrap();
+    if let Some(rx) = incoming.get_mut(proto_str) {
+        match rx.try_recv() {
+            Ok(stream) => Box::into_raw(stream),
+            Err(mpsc::error::TryRecvError::Empty) => {
+                std::ptr::null_mut()
+            }
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                set_last_error(
+                    "Protocol handler disconnected",
+                );
+                std::ptr::null_mut()
+            }
+        }
+    } else {
+        set_last_error("Protocol not registered");
+        std::ptr::null_mut()
+    }
+}
+
+/// Wait for an incoming stream (blocking).
+/// Returns null on error.
+#[no_mangle]
+pub unsafe extern "C" fn libp2p_node_accept_stream_blocking(
+    node: *mut LibP2PNode,
+    protocol_id: *const c_char,
+) -> *mut LibP2PStream {
+    if node.is_null() || protocol_id.is_null() {
+        set_last_error("null pointer argument");
+        return std::ptr::null_mut();
+    }
+    let proto_str =
+        match CStr::from_ptr(protocol_id).to_str() {
+            Ok(s) => s,
+            Err(e) => {
+                set_last_error(&format!(
+                    "Invalid UTF-8: {e}"
+                ));
+                return std::ptr::null_mut();
+            }
+        };
+
+    let node_ref = &*node;
+    let mut incoming = node_ref.incoming.lock().unwrap();
+    if let Some(rx) = incoming.get_mut(proto_str) {
+        match RUNTIME.block_on(async { rx.recv().await }) {
+            Some(stream) => Box::into_raw(stream),
+            None => {
+                set_last_error(
+                    "Protocol handler disconnected",
+                );
+                std::ptr::null_mut()
+            }
+        }
+    } else {
+        set_last_error("Protocol not registered");
+        std::ptr::null_mut()
+    }
+}
+
+/// Open an outbound stream to a peer on a protocol.
+/// Returns null on failure.
+#[no_mangle]
+pub unsafe extern "C" fn libp2p_node_open_stream(
+    node: *mut LibP2PNode,
+    peer_id: *const c_char,
+    protocol_id: *const c_char,
+) -> *mut LibP2PStream {
+    if node.is_null()
+        || peer_id.is_null()
+        || protocol_id.is_null()
+    {
+        set_last_error("null pointer argument");
+        return std::ptr::null_mut();
+    }
+
+    let peer_str = match CStr::from_ptr(peer_id).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_last_error(&format!("Invalid UTF-8: {e}"));
+            return std::ptr::null_mut();
+        }
+    };
+    let peer: PeerId = match peer_str.parse() {
+        Ok(p) => p,
+        Err(e) => {
+            set_last_error(&format!(
+                "Invalid peer ID: {e}"
+            ));
+            return std::ptr::null_mut();
+        }
+    };
+
+    let proto_str =
+        match CStr::from_ptr(protocol_id).to_str() {
+            Ok(s) => s.to_string(),
+            Err(e) => {
+                set_last_error(&format!(
+                    "Invalid UTF-8: {e}"
+                ));
+                return std::ptr::null_mut();
+            }
+        };
+    let protocol =
+        match StreamProtocol::try_from_owned(proto_str) {
+            Ok(p) => p,
+            Err(e) => {
+                set_last_error(&format!(
+                    "Invalid protocol: {e}"
+                ));
+                return std::ptr::null_mut();
+            }
+        };
+
+    let node_ref = &*node;
+    let mut control = node_ref.control.lock().unwrap();
+
+    match RUNTIME
+        .block_on(async { control.open_stream(peer, protocol).await })
+    {
+        Ok(stream) => {
+            Box::into_raw(spawn_stream_bridge(stream))
+        }
+        Err(e) => {
+            set_last_error(&format!(
+                "Failed to open stream: {e}"
+            ));
+            std::ptr::null_mut()
+        }
+    }
+}
+
+// ── C API: Stream I/O ──────────────────────────────────────
+
+/// Read up to `len` bytes from a stream into `buf`.
+/// Returns number of bytes read, 0 on EOF, -1 on error.
 #[no_mangle]
 pub unsafe extern "C" fn libp2p_stream_read(
-    _stream: *mut LibP2PStream,
-    _buf: *mut u8,
-    _len: usize,
+    stream: *mut LibP2PStream,
+    buf: *mut u8,
+    len: usize,
 ) -> i32 {
-    set_last_error("Not yet implemented");
-    -1
+    if stream.is_null() || buf.is_null() {
+        set_last_error("null pointer argument");
+        return -1;
+    }
+
+    let s = &*stream;
+    let (reply_tx, reply_rx) = oneshot::channel();
+
+    if s.read_tx
+        .blocking_send(ReadRequest {
+            max_len: len,
+            reply: reply_tx,
+        })
+        .is_err()
+    {
+        return 0; // Stream closed = EOF
+    }
+
+    match RUNTIME.block_on(async { reply_rx.await }) {
+        Ok(Ok(data)) => {
+            if data.is_empty() {
+                return 0; // EOF
+            }
+            let n = data.len();
+            std::ptr::copy_nonoverlapping(
+                data.as_ptr(),
+                buf,
+                n,
+            );
+            n as i32
+        }
+        Ok(Err(e)) => {
+            set_last_error(&e);
+            -1
+        }
+        Err(_) => 0, // Channel closed = EOF
+    }
 }
 
-/// Write to stream. Returns 0=success, -1=error.
+/// Write `len` bytes from `buf` to a stream.
+/// Returns 0 on success, -1 on failure.
 #[no_mangle]
 pub unsafe extern "C" fn libp2p_stream_write(
-    _stream: *mut LibP2PStream,
-    _buf: *const u8,
-    _len: usize,
+    stream: *mut LibP2PStream,
+    buf: *const u8,
+    len: usize,
 ) -> i32 {
-    set_last_error("Not yet implemented");
-    -1
+    if stream.is_null() || buf.is_null() {
+        set_last_error("null pointer argument");
+        return -1;
+    }
+
+    let s = &*stream;
+    let data = std::slice::from_raw_parts(buf, len).to_vec();
+    let (reply_tx, reply_rx) = oneshot::channel();
+
+    if s.write_tx
+        .blocking_send(WriteRequest {
+            data,
+            reply: reply_tx,
+        })
+        .is_err()
+    {
+        set_last_error("Stream write channel closed");
+        return -1;
+    }
+
+    match RUNTIME.block_on(async { reply_rx.await }) {
+        Ok(Ok(())) => 0,
+        Ok(Err(e)) => {
+            set_last_error(&e);
+            -1
+        }
+        Err(_) => {
+            set_last_error("Reply channel closed");
+            -1
+        }
+    }
 }
 
-/// Close a stream.
+/// Close a stream (drop write side).
 #[no_mangle]
 pub unsafe extern "C" fn libp2p_stream_close(
     _stream: *mut LibP2PStream,
 ) {
+    // Dropping the stream handle (via stream_free) closes
+    // the channels which signals EOF to the bridge task.
 }
 
 /// Free a stream handle.
@@ -339,7 +760,8 @@ async fn run_swarm(
                             Err(e) => {
                                 let _ = reply.send(Err(
                                     format!(
-                                        "Listen failed: {e}"
+                                        "Listen failed: \
+                                         {e}"
                                     )
                                 ));
                             }

@@ -6,7 +6,7 @@ License     : Apache-2.0
 -}
 module Libp2p.Stream
     ( -- * Stream handle
-      Stream
+      Stream (..)
 
       -- * Operations
     , readStream
@@ -18,7 +18,6 @@ import Control.Exception (throwIO)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Unsafe (unsafeUseAsCStringLen)
-import Data.Text qualified as T
 import Foreign.C.String (peekCString)
 import Foreign.ForeignPtr
     ( ForeignPtr
@@ -74,7 +73,7 @@ writeStream (Stream fp) bs =
                         ptr
                         (castPtr buf)
                         (fromIntegral len)
-            if rc /= 0
+            if rc /= (0 :: Int)
                 then do
                     err <- getLastError
                     throwIO

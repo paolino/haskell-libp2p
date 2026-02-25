@@ -16,6 +16,12 @@ module Libp2p.FFI
     , c_node_listen
     , c_node_dial
 
+      -- * Protocols
+    , c_node_register_protocol
+    , c_node_accept_stream
+    , c_node_accept_stream_blocking
+    , c_node_open_stream
+
       -- * Streams
     , c_stream_read
     , c_stream_write
@@ -26,16 +32,18 @@ module Libp2p.FFI
     , c_last_error
     ) where
 
+import Data.Word (Word8)
 import Foreign.C.String (CString)
 import Foreign.C.Types (CInt (..))
 import Foreign.Ptr (Ptr)
-import Data.Word (Word8)
 
 -- | Opaque handle for a libp2p node.
 data NodeHandle
 
 -- | Opaque handle for a libp2p stream.
 data StreamHandle
+
+-- Node lifecycle
 
 foreign import ccall unsafe "libp2p_node_new"
     c_node_new :: IO (Ptr NodeHandle)
@@ -44,7 +52,8 @@ foreign import ccall unsafe "libp2p_node_free"
     c_node_free :: Ptr NodeHandle -> IO ()
 
 foreign import ccall unsafe "libp2p_node_peer_id"
-    c_node_peer_id :: Ptr NodeHandle -> IO CString
+    c_node_peer_id
+        :: Ptr NodeHandle -> IO CString
 
 foreign import ccall safe "libp2p_node_listen"
     c_node_listen
@@ -53,6 +62,36 @@ foreign import ccall safe "libp2p_node_listen"
 foreign import ccall safe "libp2p_node_dial"
     c_node_dial
         :: Ptr NodeHandle -> CString -> IO CInt
+
+-- Protocols
+
+foreign import ccall unsafe
+    "libp2p_node_register_protocol"
+    c_node_register_protocol
+        :: Ptr NodeHandle -> CString -> IO CInt
+
+foreign import ccall unsafe
+    "libp2p_node_accept_stream"
+    c_node_accept_stream
+        :: Ptr NodeHandle
+        -> CString
+        -> IO (Ptr StreamHandle)
+
+foreign import ccall safe
+    "libp2p_node_accept_stream_blocking"
+    c_node_accept_stream_blocking
+        :: Ptr NodeHandle
+        -> CString
+        -> IO (Ptr StreamHandle)
+
+foreign import ccall safe "libp2p_node_open_stream"
+    c_node_open_stream
+        :: Ptr NodeHandle
+        -> CString
+        -> CString
+        -> IO (Ptr StreamHandle)
+
+-- Streams
 
 foreign import ccall safe "libp2p_stream_read"
     c_stream_read
@@ -73,6 +112,8 @@ foreign import ccall unsafe "libp2p_stream_close"
 
 foreign import ccall unsafe "libp2p_stream_free"
     c_stream_free :: Ptr StreamHandle -> IO ()
+
+-- Error handling
 
 foreign import ccall unsafe "libp2p_last_error"
     c_last_error :: IO CString
