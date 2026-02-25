@@ -23,8 +23,10 @@ let
         rustfmt
         clippy
       ];
-      LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [ rustLib ];
-      LIBRARY_PATH = pkgs.lib.makeLibraryPath [ rustLib ];
+      shellHook = ''
+        export LD_LIBRARY_PATH="${rustLib}/lib:$LD_LIBRARY_PATH"
+        export LIBRARY_PATH="${rustLib}/lib:$LIBRARY_PATH"
+      '';
     };
     modules = [
       {
