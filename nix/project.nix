@@ -1,0 +1,61 @@
+{ pkgs, rustLib }:
+let
+  indexState = "2026-02-01T00:00:00Z";
+  project = pkgs.haskell-nix.cabalProject' {
+    src = ../.;
+    compiler-nix-name = "ghc984";
+    index-state = indexState;
+    shell = {
+      tools = {
+        cabal = { index-state = indexState; };
+        cabal-fmt = { index-state = indexState; };
+        haskell-language-server = {
+          index-state = indexState;
+        };
+        fourmolu = { index-state = indexState; };
+        hlint = { index-state = indexState; };
+      };
+      buildInputs = with pkgs; [
+        just
+        nixfmt-classic
+        cargo
+        rustc
+        rustfmt
+        clippy
+      ];
+      shellHook = ''
+        export LD_LIBRARY_PATH="${rustLib}/lib:$LD_LIBRARY_PATH"
+        export LIBRARY_PATH="${rustLib}/lib:$LIBRARY_PATH"
+      '';
+    };
+    modules = [
+      {
+        packages.haskell-libp2p = {
+          components = {
+            library = {
+              libs = pkgs.lib.mkForce [
+                (pkgs.lib.getLib rustLib)
+              ];
+              preBuild = ''
+                export LD_LIBRARY_PATH="${rustLib}/lib:$LD_LIBRARY_PATH"
+              '';
+            };
+            tests.integration-tests = {
+              libs = pkgs.lib.mkForce [
+                (pkgs.lib.getLib rustLib)
+              ];
+              preBuild = ''
+                export LD_LIBRARY_PATH="${rustLib}/lib:$LD_LIBRARY_PATH"
+              '';
+            };
+          };
+        };
+      }
+    ];
+  };
+  flake = project.flake { };
+in
+{
+  packages = flake.packages;
+  devShells.default = project.shell;
+}

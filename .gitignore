@@ -1,0 +1,21 @@
+# Haskell
+dist-newstyle/
+cabal.project.local
+cabal.project.local~
+*.hi
+*.o
+*.dyn_hi
+*.dyn_o
+
+# Rust
+rust/target/
+
+# Nix
+result
+result-*
+
+# Editor
+.vscode/
+*.swp
+*~
+.direnv/
