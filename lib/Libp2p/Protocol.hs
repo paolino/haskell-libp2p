@@ -19,7 +19,8 @@ import Control.Monad (when)
 import Data.Text qualified as T
 import Foreign.C.String (peekCString, withCString)
 import Foreign.ForeignPtr
-    ( newForeignPtr
+    ( FinalizerPtr
+    , newForeignPtr
     , withForeignPtr
     )
 import Foreign.Ptr (nullPtr)
@@ -125,4 +126,4 @@ openStream (Node fp) (PeerId pid) proto =
 
 foreign import ccall "& libp2p_stream_free"
     ffiStreamFinalizer
-        :: Foreign.ForeignPtr.FinalizerPtr FFI.StreamHandle
+        :: FinalizerPtr FFI.StreamHandle

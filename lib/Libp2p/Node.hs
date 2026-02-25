@@ -75,7 +75,7 @@ withNode f = do
 
 foreign import ccall "& libp2p_node_free"
     ffiNodeFinalizer
-        :: Foreign.ForeignPtr.FinalizerPtr FFI.NodeHandle
+        :: FinalizerPtr FFI.NodeHandle
 
 -- | Get the peer ID of a node.
 peerId :: Node -> IO PeerId
