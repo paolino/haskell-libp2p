@@ -14,10 +14,11 @@ module Libp2p.Node
       -- * Operations
     , peerId
     , listen
+    , listenAddrs
     , dial
     ) where
 
-import Control.Exception (throwIO)
+import Control.Exception (bracket, throwIO)
 import Data.Text qualified as T
 import Foreign.C.String (peekCString, withCString)
 import Foreign.ForeignPtr
@@ -95,6 +96,22 @@ listen (Node fp) (Multiaddr addr) =
             checkRC $
                 fromIntegral
                     <$> FFI.c_node_listen ptr caddr
+
+-- | Get the current listen addresses.
+listenAddrs :: Node -> IO [Multiaddr]
+listenAddrs (Node fp) = withForeignPtr fp $ \ptr -> do
+    cstr <- FFI.c_node_listen_addrs ptr
+    if cstr == nullPtr
+        then pure []
+        else bracket
+            (pure cstr)
+            FFI.c_string_free
+            $ \cs -> do
+                s <- peekCString cs
+                pure $
+                    map (Multiaddr . T.pack) $
+                        filter (not . null) $
+                            lines s
 
 -- | Dial a remote peer at a multiaddress.
 dial :: Node -> Multiaddr -> IO ()

@@ -9,9 +9,7 @@ let
       tools = {
         cabal = { index-state = indexState; };
         cabal-fmt = { index-state = indexState; };
-        haskell-language-server = {
-          index-state = indexState;
-        };
+        haskell-language-server = { index-state = indexState; };
         fourmolu = { index-state = indexState; };
         hlint = { index-state = indexState; };
       };
@@ -24,34 +22,27 @@ let
         clippy
       ];
     };
-    modules = [
-      {
-        packages.haskell-libp2p = {
-          components = {
-            library = {
-              libs = pkgs.lib.mkForce [
-                (pkgs.lib.getLib rustLib)
-              ];
-              preBuild = ''
-                export LD_LIBRARY_PATH="${rustLib}/lib:$LD_LIBRARY_PATH"
-              '';
-            };
-            tests.integration-tests = {
-              libs = pkgs.lib.mkForce [
-                (pkgs.lib.getLib rustLib)
-              ];
-              preBuild = ''
-                export LD_LIBRARY_PATH="${rustLib}/lib:$LD_LIBRARY_PATH"
-              '';
-            };
+    modules = [{
+      packages.haskell-libp2p = {
+        components = {
+          library = {
+            libs = pkgs.lib.mkForce [ (pkgs.lib.getLib rustLib) ];
+            preBuild = ''
+              export LD_LIBRARY_PATH="${rustLib}/lib:$LD_LIBRARY_PATH"
+            '';
+          };
+          tests.integration-tests = {
+            libs = pkgs.lib.mkForce [ (pkgs.lib.getLib rustLib) ];
+            preBuild = ''
+              export LD_LIBRARY_PATH="${rustLib}/lib:$LD_LIBRARY_PATH"
+            '';
           };
         };
-      }
-    ];
+      };
+    }];
   };
   flake = project.flake { };
-in
-{
+in {
   packages = flake.packages;
   devShells.default = project.shell.overrideAttrs (old: {
     LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [ rustLib ];

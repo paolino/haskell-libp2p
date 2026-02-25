@@ -28,6 +28,10 @@ module Libp2p.FFI
     , c_stream_close
     , c_stream_free
 
+      -- * Addresses
+    , c_node_listen_addrs
+    , c_string_free
+
       -- * Error handling
     , c_last_error
     ) where
@@ -109,6 +113,15 @@ foreign import ccall unsafe "libp2p_stream_close"
 
 foreign import ccall unsafe "libp2p_stream_free"
     c_stream_free :: Ptr StreamHandle -> IO ()
+
+-- Addresses
+
+foreign import ccall safe "libp2p_node_listen_addrs"
+    c_node_listen_addrs
+        :: Ptr NodeHandle -> IO CString
+
+foreign import ccall unsafe "libp2p_string_free"
+    c_string_free :: CString -> IO ()
 
 -- Error handling
 

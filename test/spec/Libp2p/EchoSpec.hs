@@ -9,6 +9,7 @@ module Libp2p.EchoSpec (spec) where
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async, wait)
 import Data.ByteString (ByteString)
+import Data.List.NonEmpty qualified as NE
 import Test.Hspec (Spec, describe, it, shouldBe)
 
 import Libp2p
@@ -30,21 +31,22 @@ spec = describe "Two-node echo" $ do
                     nodeA
                     "/test/echo/1.0.0"
 
-                -- Give A time to start listening
+                -- Wait for listener to bind
                 threadDelay 500_000
 
-                -- Node B: get A's peer ID and dial
-                pidA <- peerId nodeA
+                -- Get A's actual listen address
+                addrsA <- listenAddrs nodeA
+                addrsNE <-
+                    case NE.nonEmpty addrsA of
+                        Nothing ->
+                            fail "No listen addresses"
+                        Just ne -> pure ne
+                let addrA = NE.head addrsNE
 
-                -- For now, dial the listening address
-                -- (in a real scenario we'd discover it)
-                listen
-                    nodeB
-                    ( Multiaddr
-                        "/ip4/127.0.0.1/tcp/0/ws"
-                    )
+                -- Node B: dial Node A
+                dial nodeB addrA
 
-                -- Give B time to start listening
+                -- Wait for connection
                 threadDelay 500_000
 
                 -- Node A: accept incoming stream
@@ -61,10 +63,11 @@ spec = describe "Two-node echo" $ do
                     closeStream stream
                     pure msg
 
-                -- Give protocol handler time to register
+                -- Give protocol handler time
                 threadDelay 200_000
 
                 -- Node B: open stream to A
+                pidA <- peerId nodeA
                 streamB <-
                     openStream
                         nodeB
