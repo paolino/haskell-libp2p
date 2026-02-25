@@ -15,19 +15,17 @@ use std::sync::{LazyLock, Mutex};
 use futures::io::{AsyncReadExt, AsyncWriteExt};
 use futures::StreamExt;
 use libp2p::{
-    identify, noise, tcp,
+    identify, noise,
     swarm::{NetworkBehaviour, SwarmEvent},
-    yamux, Multiaddr, PeerId, Stream,
-    StreamProtocol, Swarm, SwarmBuilder,
+    tcp, yamux, Multiaddr, PeerId, Stream, StreamProtocol, Swarm, SwarmBuilder,
 };
 use libp2p_stream as stream;
 use tokio::runtime::Runtime;
 use tokio::sync::{mpsc, oneshot};
 
 /// Global tokio runtime shared by all nodes.
-static RUNTIME: LazyLock<Runtime> = LazyLock::new(|| {
-    Runtime::new().expect("Failed to create tokio runtime")
-});
+static RUNTIME: LazyLock<Runtime> =
+    LazyLock::new(|| Runtime::new().expect("Failed to create tokio runtime"));
 
 // Thread-local last error message.
 thread_local! {
@@ -37,8 +35,7 @@ thread_local! {
 
 fn set_last_error(msg: &str) {
     LAST_ERROR.with(|e| {
-        *e.borrow_mut() =
-            Some(CString::new(msg).unwrap_or_default());
+        *e.borrow_mut() = Some(CString::new(msg).unwrap_or_default());
     });
 }
 
@@ -85,13 +82,9 @@ struct WriteRequest {
 }
 
 /// Spawn a task that bridges sync FFI calls to async stream I/O.
-fn spawn_stream_bridge(
-    stream: Stream,
-) -> Box<LibP2PStream> {
-    let (read_tx, mut read_rx) =
-        mpsc::channel::<ReadRequest>(16);
-    let (write_tx, mut write_rx) =
-        mpsc::channel::<WriteRequest>(16);
+fn spawn_stream_bridge(stream: Stream) -> Box<LibP2PStream> {
+    let (read_tx, mut read_rx) = mpsc::channel::<ReadRequest>(16);
+    let (write_tx, mut write_rx) = mpsc::channel::<WriteRequest>(16);
 
     RUNTIME.spawn(async move {
         let (mut reader, mut writer) = stream.split();
@@ -177,9 +170,7 @@ pub struct LibP2PNode {
     /// Stream control for opening outbound streams.
     control: Mutex<stream::Control>,
     /// Per-protocol incoming stream queues.
-    incoming: Mutex<
-        HashMap<String, mpsc::Receiver<Box<LibP2PStream>>>,
-    >,
+    incoming: Mutex<HashMap<String, mpsc::Receiver<Box<LibP2PStream>>>>,
 }
 
 // ── C API: Node lifecycle ──────────────────────────────────
@@ -187,68 +178,46 @@ pub struct LibP2PNode {
 /// Create a new libp2p node. Returns null on failure.
 #[no_mangle]
 pub extern "C" fn libp2p_node_new() -> *mut LibP2PNode {
-    let result: Result<Box<LibP2PNode>, String> =
-        RUNTIME.block_on(async {
-            let stream_behaviour = stream::Behaviour::new();
-            let control = stream_behaviour.new_control();
+    let result: Result<Box<LibP2PNode>, String> = RUNTIME.block_on(async {
+        let stream_behaviour = stream::Behaviour::new();
+        let control = stream_behaviour.new_control();
 
-            let swarm = SwarmBuilder::with_new_identity()
-                .with_tokio()
-                .with_tcp(
-                    tcp::Config::default(),
-                    noise::Config::new,
-                    yamux::Config::default,
-                )
-                .map_err(|e| {
-                    format!("Failed to build TCP: {e}")
-                })?
-                .with_websocket(
-                    noise::Config::new,
-                    yamux::Config::default,
-                )
-                .await
-                .map_err(|e| {
-                    format!(
-                        "Failed to build WebSocket: {e}"
-                    )
-                })?
-                .with_behaviour(|key| NodeBehaviour {
-                    identify: identify::Behaviour::new(
-                        identify::Config::new(
-                            "/haskell-libp2p/0.1.0"
-                                .to_string(),
-                            key.public(),
-                        ),
-                    ),
-                    stream: stream_behaviour,
-                })
-                .map_err(|e| {
-                    format!(
-                        "Failed to build behaviour: {e}"
-                    )
-                })?
-                .build();
+        let swarm = SwarmBuilder::with_new_identity()
+            .with_tokio()
+            .with_tcp(
+                tcp::Config::default(),
+                noise::Config::new,
+                yamux::Config::default,
+            )
+            .map_err(|e| format!("Failed to build TCP: {e}"))?
+            .with_websocket(noise::Config::new, yamux::Config::default)
+            .await
+            .map_err(|e| format!("Failed to build WebSocket: {e}"))?
+            .with_behaviour(|key| NodeBehaviour {
+                identify: identify::Behaviour::new(identify::Config::new(
+                    "/haskell-libp2p/0.1.0".to_string(),
+                    key.public(),
+                )),
+                stream: stream_behaviour,
+            })
+            .map_err(|e| format!("Failed to build behaviour: {e}"))?
+            .build();
 
-            let peer_id = *swarm.local_peer_id();
-            let peer_id_str =
-                CString::new(peer_id.to_string())
-                    .map_err(|e| {
-                        format!(
-                            "Invalid peer ID string: {e}"
-                        )
-                    })?;
+        let peer_id = *swarm.local_peer_id();
+        let peer_id_str = CString::new(peer_id.to_string())
+            .map_err(|e| format!("Invalid peer ID string: {e}"))?;
 
-            let (cmd_tx, cmd_rx) = mpsc::channel(64);
+        let (cmd_tx, cmd_rx) = mpsc::channel(64);
 
-            RUNTIME.spawn(run_swarm(swarm, cmd_rx));
+        RUNTIME.spawn(run_swarm(swarm, cmd_rx));
 
-            Ok(Box::new(LibP2PNode {
-                peer_id: peer_id_str,
-                cmd_tx,
-                control: Mutex::new(control),
-                incoming: Mutex::new(HashMap::new()),
-            }))
-        });
+        Ok(Box::new(LibP2PNode {
+            peer_id: peer_id_str,
+            cmd_tx,
+            control: Mutex::new(control),
+            incoming: Mutex::new(HashMap::new()),
+        }))
+    });
 
     match result {
         Ok(node) => Box::into_raw(node),
@@ -261,9 +230,7 @@ pub extern "C" fn libp2p_node_new() -> *mut LibP2PNode {
 
 /// Free a node.
 #[no_mangle]
-pub unsafe extern "C" fn libp2p_node_free(
-    node: *mut LibP2PNode,
-) {
+pub unsafe extern "C" fn libp2p_node_free(node: *mut LibP2PNode) {
     if !node.is_null() {
         drop(Box::from_raw(node));
     }
@@ -271,9 +238,7 @@ pub unsafe extern "C" fn libp2p_node_free(
 
 /// Get the PeerId as a null-terminated string.
 #[no_mangle]
-pub unsafe extern "C" fn libp2p_node_peer_id(
-    node: *const LibP2PNode,
-) -> *const c_char {
+pub unsafe extern "C" fn libp2p_node_peer_id(node: *const LibP2PNode) -> *const c_char {
     if node.is_null() {
         return std::ptr::null();
     }
@@ -301,9 +266,7 @@ pub unsafe extern "C" fn libp2p_node_listen(
     let addr: Multiaddr = match addr_str.parse() {
         Ok(a) => a,
         Err(e) => {
-            set_last_error(&format!(
-                "Invalid multiaddr: {e}"
-            ));
+            set_last_error(&format!("Invalid multiaddr: {e}"));
             return -1;
         }
     };
@@ -355,9 +318,7 @@ pub unsafe extern "C" fn libp2p_node_dial(
     let addr: Multiaddr = match addr_str.parse() {
         Ok(a) => a,
         Err(e) => {
-            set_last_error(&format!(
-                "Invalid multiaddr: {e}"
-            ));
+            set_last_error(&format!("Invalid multiaddr: {e}"));
             return -1;
         }
     };
@@ -403,20 +364,16 @@ pub unsafe extern "C" fn libp2p_node_register_protocol(
         set_last_error("null pointer argument");
         return -1;
     }
-    let proto_str =
-        match CStr::from_ptr(protocol_id).to_str() {
-            Ok(s) => s.to_string(),
-            Err(e) => {
-                set_last_error(&format!(
-                    "Invalid UTF-8: {e}"
-                ));
-                return -1;
-            }
-        };
+    let proto_str = match CStr::from_ptr(protocol_id).to_str() {
+        Ok(s) => s.to_string(),
+        Err(e) => {
+            set_last_error(&format!("Invalid UTF-8: {e}"));
+            return -1;
+        }
+    };
 
-    let protocol =
-        StreamProtocol::try_from_owned(proto_str.clone())
-            .map_err(|e| format!("Invalid protocol: {e}"));
+    let protocol = StreamProtocol::try_from_owned(proto_str.clone())
+        .map_err(|e| format!("Invalid protocol: {e}"));
     let protocol = match protocol {
         Ok(p) => p,
         Err(e) => {
@@ -429,12 +386,10 @@ pub unsafe extern "C" fn libp2p_node_register_protocol(
     let mut control = node_ref.control.lock().unwrap();
 
     // Accept incoming streams for this protocol
-    let mut incoming_streams =
-        control.accept(protocol).unwrap();
+    let mut incoming_streams = control.accept(protocol).unwrap();
 
     // Create a channel for Haskell to poll
-    let (tx, rx) =
-        mpsc::channel::<Box<LibP2PStream>>(64);
+    let (tx, rx) = mpsc::channel::<Box<LibP2PStream>>(64);
 
     node_ref
         .incoming
@@ -445,9 +400,7 @@ pub unsafe extern "C" fn libp2p_node_register_protocol(
     // Spawn a task that accepts incoming streams and
     // wraps them for FFI
     RUNTIME.spawn(async move {
-        while let Some((peer_id, stream)) =
-            incoming_streams.next().await
-        {
+        while let Some((peer_id, stream)) = incoming_streams.next().await {
             log::info!(
                 "Incoming stream from {peer_id} \
                  on {proto_str}"
@@ -475,29 +428,22 @@ pub unsafe extern "C" fn libp2p_node_accept_stream(
         set_last_error("null pointer argument");
         return std::ptr::null_mut();
     }
-    let proto_str =
-        match CStr::from_ptr(protocol_id).to_str() {
-            Ok(s) => s,
-            Err(e) => {
-                set_last_error(&format!(
-                    "Invalid UTF-8: {e}"
-                ));
-                return std::ptr::null_mut();
-            }
-        };
+    let proto_str = match CStr::from_ptr(protocol_id).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_last_error(&format!("Invalid UTF-8: {e}"));
+            return std::ptr::null_mut();
+        }
+    };
 
     let node_ref = &*node;
     let mut incoming = node_ref.incoming.lock().unwrap();
     if let Some(rx) = incoming.get_mut(proto_str) {
         match rx.try_recv() {
             Ok(stream) => Box::into_raw(stream),
-            Err(mpsc::error::TryRecvError::Empty) => {
-                std::ptr::null_mut()
-            }
+            Err(mpsc::error::TryRecvError::Empty) => std::ptr::null_mut(),
             Err(mpsc::error::TryRecvError::Disconnected) => {
-                set_last_error(
-                    "Protocol handler disconnected",
-                );
+                set_last_error("Protocol handler disconnected");
                 std::ptr::null_mut()
             }
         }
@@ -518,16 +464,13 @@ pub unsafe extern "C" fn libp2p_node_accept_stream_blocking(
         set_last_error("null pointer argument");
         return std::ptr::null_mut();
     }
-    let proto_str =
-        match CStr::from_ptr(protocol_id).to_str() {
-            Ok(s) => s,
-            Err(e) => {
-                set_last_error(&format!(
-                    "Invalid UTF-8: {e}"
-                ));
-                return std::ptr::null_mut();
-            }
-        };
+    let proto_str = match CStr::from_ptr(protocol_id).to_str() {
+        Ok(s) => s,
+        Err(e) => {
+            set_last_error(&format!("Invalid UTF-8: {e}"));
+            return std::ptr::null_mut();
+        }
+    };
 
     let node_ref = &*node;
     let mut incoming = node_ref.incoming.lock().unwrap();
@@ -535,9 +478,7 @@ pub unsafe extern "C" fn libp2p_node_accept_stream_blocking(
         match RUNTIME.block_on(async { rx.recv().await }) {
             Some(stream) => Box::into_raw(stream),
             None => {
-                set_last_error(
-                    "Protocol handler disconnected",
-                );
+                set_last_error("Protocol handler disconnected");
                 std::ptr::null_mut()
             }
         }
@@ -555,10 +496,7 @@ pub unsafe extern "C" fn libp2p_node_open_stream(
     peer_id: *const c_char,
     protocol_id: *const c_char,
 ) -> *mut LibP2PStream {
-    if node.is_null()
-        || peer_id.is_null()
-        || protocol_id.is_null()
-    {
+    if node.is_null() || peer_id.is_null() || protocol_id.is_null() {
         set_last_error("null pointer argument");
         return std::ptr::null_mut();
     }
@@ -573,47 +511,33 @@ pub unsafe extern "C" fn libp2p_node_open_stream(
     let peer: PeerId = match peer_str.parse() {
         Ok(p) => p,
         Err(e) => {
-            set_last_error(&format!(
-                "Invalid peer ID: {e}"
-            ));
+            set_last_error(&format!("Invalid peer ID: {e}"));
             return std::ptr::null_mut();
         }
     };
 
-    let proto_str =
-        match CStr::from_ptr(protocol_id).to_str() {
-            Ok(s) => s.to_string(),
-            Err(e) => {
-                set_last_error(&format!(
-                    "Invalid UTF-8: {e}"
-                ));
-                return std::ptr::null_mut();
-            }
-        };
-    let protocol =
-        match StreamProtocol::try_from_owned(proto_str) {
-            Ok(p) => p,
-            Err(e) => {
-                set_last_error(&format!(
-                    "Invalid protocol: {e}"
-                ));
-                return std::ptr::null_mut();
-            }
-        };
+    let proto_str = match CStr::from_ptr(protocol_id).to_str() {
+        Ok(s) => s.to_string(),
+        Err(e) => {
+            set_last_error(&format!("Invalid UTF-8: {e}"));
+            return std::ptr::null_mut();
+        }
+    };
+    let protocol = match StreamProtocol::try_from_owned(proto_str) {
+        Ok(p) => p,
+        Err(e) => {
+            set_last_error(&format!("Invalid protocol: {e}"));
+            return std::ptr::null_mut();
+        }
+    };
 
     let node_ref = &*node;
     let mut control = node_ref.control.lock().unwrap();
 
-    match RUNTIME
-        .block_on(async { control.open_stream(peer, protocol).await })
-    {
-        Ok(stream) => {
-            Box::into_raw(spawn_stream_bridge(stream))
-        }
+    match RUNTIME.block_on(async { control.open_stream(peer, protocol).await }) {
+        Ok(stream) => Box::into_raw(spawn_stream_bridge(stream)),
         Err(e) => {
-            set_last_error(&format!(
-                "Failed to open stream: {e}"
-            ));
+            set_last_error(&format!("Failed to open stream: {e}"));
             std::ptr::null_mut()
         }
     }
@@ -653,11 +577,7 @@ pub unsafe extern "C" fn libp2p_stream_read(
                 return 0; // EOF
             }
             let n = data.len();
-            std::ptr::copy_nonoverlapping(
-                data.as_ptr(),
-                buf,
-                n,
-            );
+            std::ptr::copy_nonoverlapping(data.as_ptr(), buf, n);
             n as i32
         }
         Ok(Err(e)) => {
@@ -711,18 +631,14 @@ pub unsafe extern "C" fn libp2p_stream_write(
 
 /// Close a stream (drop write side).
 #[no_mangle]
-pub unsafe extern "C" fn libp2p_stream_close(
-    _stream: *mut LibP2PStream,
-) {
+pub unsafe extern "C" fn libp2p_stream_close(_stream: *mut LibP2PStream) {
     // Dropping the stream handle (via stream_free) closes
     // the channels which signals EOF to the bridge task.
 }
 
 /// Free a stream handle.
 #[no_mangle]
-pub unsafe extern "C" fn libp2p_stream_free(
-    stream: *mut LibP2PStream,
-) {
+pub unsafe extern "C" fn libp2p_stream_free(stream: *mut LibP2PStream) {
     if !stream.is_null() {
         drop(Box::from_raw(stream));
     }
@@ -733,19 +649,12 @@ pub unsafe extern "C" fn libp2p_stream_free(
 /// Get the last error message. Returns null if no error.
 #[no_mangle]
 pub extern "C" fn libp2p_last_error() -> *const c_char {
-    LAST_ERROR.with(|e| {
-        e.borrow()
-            .as_ref()
-            .map_or(std::ptr::null(), |s| s.as_ptr())
-    })
+    LAST_ERROR.with(|e| e.borrow().as_ref().map_or(std::ptr::null(), |s| s.as_ptr()))
 }
 
 // ── Swarm event loop ───────────────────────────────────────
 
-async fn run_swarm(
-    mut swarm: Swarm<NodeBehaviour>,
-    mut cmd_rx: mpsc::Receiver<Command>,
-) {
+async fn run_swarm(mut swarm: Swarm<NodeBehaviour>, mut cmd_rx: mpsc::Receiver<Command>) {
     loop {
         tokio::select! {
             cmd = cmd_rx.recv() => {
