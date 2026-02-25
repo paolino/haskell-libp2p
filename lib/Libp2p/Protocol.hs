@@ -15,6 +15,7 @@ module Libp2p.Protocol
     ) where
 
 import Control.Exception (throwIO)
+import Control.Monad (when)
 import Data.Text qualified as T
 import Foreign.C.String (peekCString, withCString)
 import Foreign.ForeignPtr
@@ -50,14 +51,12 @@ registerProtocol (Node fp) proto =
                     <$> FFI.c_node_register_protocol
                         ptr
                         cproto
-            if rc /= 0
-                then do
-                    err <- getLastError
-                    throwIO $
-                        userError $
-                            "Failed to register protocol: "
-                                <> err
-                else pure ()
+            when (rc /= 0) $ do
+                err <- getLastError
+                throwIO $
+                    userError $
+                        "Failed to register protocol: "
+                            <> err
 
 {- | Non-blocking poll for an incoming stream.
 Returns 'Nothing' if no stream is available.

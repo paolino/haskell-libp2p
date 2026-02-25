@@ -15,6 +15,7 @@ module Libp2p.Stream
     ) where
 
 import Control.Exception (throwIO)
+import Control.Monad (when)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Unsafe (unsafeUseAsCStringLen)
@@ -74,14 +75,12 @@ writeStream (Stream fp) bs =
                         ptr
                         (castPtr buf)
                         (fromIntegral len)
-            if rc /= (0 :: Int)
-                then do
-                    err <- getLastError
-                    throwIO $
-                        userError $
-                            "Stream write error: "
-                                <> err
-                else pure ()
+            when (rc /= (0 :: Int)) $ do
+                err <- getLastError
+                throwIO $
+                    userError $
+                        "Stream write error: "
+                            <> err
 
 -- | Close a stream (signal EOF).
 closeStream :: Stream -> IO ()
