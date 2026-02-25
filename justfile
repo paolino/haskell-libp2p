@@ -4,12 +4,14 @@ build-rust:
 
 # Build Haskell library (depends on Rust lib)
 build: build-rust
-    cabal build all -O0
+    cabal build all -O0 --extra-lib-dirs=rust/target/release
 
 # Run integration tests
 test: build-rust
-    cabal test integration-tests -O0 \
-        --test-show-details=direct
+    LD_LIBRARY_PATH="rust/target/release:$LD_LIBRARY_PATH" \
+        cabal test integration-tests -O0 \
+        --test-show-details=direct \
+        --extra-lib-dirs=rust/target/release
 
 # Format all sources
 format:
