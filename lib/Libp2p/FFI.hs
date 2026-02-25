@@ -65,20 +65,17 @@ foreign import ccall safe "libp2p_node_dial"
 
 -- Protocols
 
-foreign import ccall unsafe
-    "libp2p_node_register_protocol"
+foreign import ccall unsafe "libp2p_node_register_protocol"
     c_node_register_protocol
         :: Ptr NodeHandle -> CString -> IO CInt
 
-foreign import ccall unsafe
-    "libp2p_node_accept_stream"
+foreign import ccall unsafe "libp2p_node_accept_stream"
     c_node_accept_stream
         :: Ptr NodeHandle
         -> CString
         -> IO (Ptr StreamHandle)
 
-foreign import ccall safe
-    "libp2p_node_accept_stream_blocking"
+foreign import ccall safe "libp2p_node_accept_stream_blocking"
     c_node_accept_stream_blocking
         :: Ptr NodeHandle
         -> CString

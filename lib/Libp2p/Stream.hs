@@ -39,8 +39,9 @@ getLastError = do
         then pure "Unknown error"
         else peekCString cstr
 
--- | Read up to @n@ bytes from a stream.
--- Returns empty ByteString on EOF.
+{- | Read up to @n@ bytes from a stream.
+Returns empty ByteString on EOF.
+-}
 readStream :: Stream -> Int -> IO ByteString
 readStream (Stream fp) maxLen =
     withForeignPtr fp $ \ptr ->
@@ -54,10 +55,10 @@ readStream (Stream fp) maxLen =
             if n < 0
                 then do
                     err <- getLastError
-                    throwIO
-                        $ userError
-                        $ "Stream read error: "
-                        <> err
+                    throwIO $
+                        userError $
+                            "Stream read error: "
+                                <> err
                 else
                     BS.packCStringLen
                         (buf, fromIntegral n)
@@ -76,10 +77,10 @@ writeStream (Stream fp) bs =
             if rc /= (0 :: Int)
                 then do
                     err <- getLastError
-                    throwIO
-                        $ userError
-                        $ "Stream write error: "
-                        <> err
+                    throwIO $
+                        userError $
+                            "Stream write error: "
+                                <> err
                 else pure ()
 
 -- | Close a stream (signal EOF).
