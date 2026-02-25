@@ -28,14 +28,12 @@ common language
 common opts-lib
   ghc-options:
     -Wall -Werror -Wunused-imports -Wunused-packages
-    -Wmissing-export-lists -Wname-shadowing
-    -Wredundant-constraints
+    -Wmissing-export-lists -Wname-shadowing -Wredundant-constraints
 
 common opts-exe
   ghc-options:
     -Wall -Werror -Wunused-imports -Wunused-packages
-    -Wmissing-export-lists -threaded -rtsopts
-    -with-rtsopts=-N
+    -Wmissing-export-lists -threaded -rtsopts -with-rtsopts=-N
 
 library
   import:          language, opts-lib
@@ -61,14 +59,13 @@ test-suite integration-tests
   hs-source-dirs:     test/spec
   main-is:            Main.hs
   ghc-options:        -threaded -rtsopts -with-rtsopts=-N
-  other-modules:   Libp2p.EchoSpec
+  other-modules:      Libp2p.EchoSpec
   build-depends:
-    , async          >=2.2  && <2.3
+    , async           >=2.2  && <2.3
     , base
     , bytestring
     , haskell-libp2p
-    , hspec          >=2.10 && <3
-    , text
+    , hspec           >=2.10 && <3
 
   extra-libraries:    haskell_libp2p
   build-tool-depends: hspec-discover:hspec-discover

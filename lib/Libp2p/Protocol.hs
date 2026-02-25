@@ -47,7 +47,7 @@ registerProtocol :: Node -> T.Text -> IO ()
 registerProtocol (Node fp) proto =
     withForeignPtr fp $ \ptr ->
         withCString (T.unpack proto) $ \cproto -> do
-            rc <-
+            rc :: Int <-
                 fromIntegral
                     <$> FFI.c_node_register_protocol
                         ptr

@@ -58,6 +58,9 @@ enum Command {
         addr: Multiaddr,
         reply: oneshot::Sender<Result<(), String>>,
     },
+    ListenAddrs {
+        reply: oneshot::Sender<Vec<Multiaddr>>,
+    },
 }
 
 // ── Stream wrapper ─────────────────────────────────────────
@@ -346,6 +349,56 @@ pub unsafe extern "C" fn libp2p_node_dial(
             set_last_error("Reply channel closed");
             -1
         }
+    }
+}
+
+/// Get current listen addresses as newline-separated string.
+/// Returns null on failure. Caller must free the returned
+/// string with `libp2p_string_free`.
+#[no_mangle]
+pub unsafe extern "C" fn libp2p_node_listen_addrs(node: *const LibP2PNode) -> *mut c_char {
+    if node.is_null() {
+        set_last_error("null pointer argument");
+        return std::ptr::null_mut();
+    }
+
+    let (reply_tx, reply_rx) = oneshot::channel();
+    if (*node)
+        .cmd_tx
+        .blocking_send(Command::ListenAddrs { reply: reply_tx })
+        .is_err()
+    {
+        set_last_error("Node event loop has stopped");
+        return std::ptr::null_mut();
+    }
+
+    match RUNTIME.block_on(reply_rx) {
+        Ok(addrs) => {
+            let joined: String = addrs
+                .iter()
+                .map(|a| a.to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+            match CString::new(joined) {
+                Ok(cs) => cs.into_raw(),
+                Err(e) => {
+                    set_last_error(&format!("Invalid address string: {e}"));
+                    std::ptr::null_mut()
+                }
+            }
+        }
+        Err(_) => {
+            set_last_error("Reply channel closed");
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Free a string returned by `libp2p_node_listen_addrs`.
+#[no_mangle]
+pub unsafe extern "C" fn libp2p_string_free(s: *mut c_char) {
+    if !s.is_null() {
+        drop(CString::from_raw(s));
     }
 }
 
@@ -655,6 +708,8 @@ pub extern "C" fn libp2p_last_error() -> *const c_char {
 // ── Swarm event loop ───────────────────────────────────────
 
 async fn run_swarm(mut swarm: Swarm<NodeBehaviour>, mut cmd_rx: mpsc::Receiver<Command>) {
+    let mut listen_addrs: Vec<Multiaddr> = Vec::new();
+
     loop {
         tokio::select! {
             cmd = cmd_rx.recv() => {
@@ -690,6 +745,11 @@ async fn run_swarm(mut swarm: Swarm<NodeBehaviour>, mut cmd_rx: mpsc::Receiver<C
                             }
                         }
                     }
+                    Some(Command::ListenAddrs { reply }) => {
+                        let _ = reply.send(
+                            listen_addrs.clone()
+                        );
+                    }
                     None => break,
                 }
             }
@@ -701,6 +761,9 @@ async fn run_swarm(mut swarm: Swarm<NodeBehaviour>, mut cmd_rx: mpsc::Receiver<C
                     } => {
                         log::info!(
                             "Listening on {address}"
+                        );
+                        listen_addrs.push(
+                            address
                         );
                     }
                     SwarmEvent::ConnectionEstablished {
