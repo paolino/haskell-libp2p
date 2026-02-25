@@ -43,7 +43,10 @@ let
   };
   flake = project.flake { };
 in {
-  packages = flake.packages;
+  packages = flake.packages // {
+    integration-tests =
+      project.hsPkgs.haskell-libp2p.components.tests.integration-tests;
+  };
   devShells.default = project.shell.overrideAttrs (old: {
     LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [ rustLib ];
     LIBRARY_PATH = pkgs.lib.makeLibraryPath [ rustLib ];
