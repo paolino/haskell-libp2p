@@ -11,8 +11,10 @@ in rustPkgs.rustPlatform.buildRustPackage {
   # Only install the shared library
   installPhase = ''
     mkdir -p $out/lib
-    cp target/release/libhaskell_libp2p.so $out/lib/ \
-      || cp target/release/libhaskell_libp2p.dylib $out/lib/ \
-      || true
+    find target/ -name 'libhaskell_libp2p.so' -o -name 'libhaskell_libp2p.dylib' \
+      | grep -v deps \
+      | head -1 \
+      | xargs -I{} cp {} $out/lib/
+    ls $out/lib/libhaskell_libp2p* || { echo "ERROR: shared library not found"; exit 1; }
   '';
 }
