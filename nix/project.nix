@@ -23,10 +23,6 @@ let
         rustfmt
         clippy
       ];
-      shellHook = ''
-        export LD_LIBRARY_PATH="${rustLib}/lib:$LD_LIBRARY_PATH"
-        export LIBRARY_PATH="${rustLib}/lib:$LIBRARY_PATH"
-      '';
     };
     modules = [
       {
@@ -57,5 +53,8 @@ let
 in
 {
   packages = flake.packages;
-  devShells.default = project.shell;
+  devShells.default = project.shell.overrideAttrs (old: {
+    LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [ rustLib ];
+    LIBRARY_PATH = pkgs.lib.makeLibraryPath [ rustLib ];
+  });
 }
