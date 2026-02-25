@@ -21,7 +21,8 @@ import Control.Exception (throwIO)
 import Data.Text qualified as T
 import Foreign.C.String (peekCString, withCString)
 import Foreign.ForeignPtr
-    ( ForeignPtr
+    ( FinalizerPtr
+    , ForeignPtr
     , newForeignPtr
     , withForeignPtr
     )

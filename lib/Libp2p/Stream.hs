@@ -47,7 +47,7 @@ readStream :: Stream -> Int -> IO ByteString
 readStream (Stream fp) maxLen =
     withForeignPtr fp $ \ptr ->
         allocaBytes maxLen $ \buf -> do
-            n <-
+            n :: Int <-
                 fromIntegral
                     <$> FFI.c_stream_read
                         ptr
