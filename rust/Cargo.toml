@@ -1,0 +1,29 @@
+[package]
+name = "haskell-libp2p"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Rust cdylib wrapping rust-libp2p for Haskell FFI"
+
+[lib]
+name = "haskell_libp2p"
+crate-type = ["cdylib"]
+
+[dependencies]
+libp2p = { version = "0.54", features = [
+    "tokio",
+    "noise",
+    "yamux",
+    "websocket",
+    "identify",
+    "macros",
+    "tcp",
+    "dns",
+] }
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+log = "0.4"
+env_logger = "0.11"
+
+[build-dependencies]
+cbindgen = "0.27"

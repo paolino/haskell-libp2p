@@ -1,0 +1,72 @@
+cabal-version:   3.0
+name:            haskell-libp2p
+version:         0.1.0.0
+synopsis:        Haskell bindings for libp2p via Rust FFI
+description:
+  Provides Haskell bindings for libp2p networking via a Rust
+  cdylib that wraps rust-libp2p. Supports node lifecycle,
+  WebSocket transport, Noise encryption, Yamux muxing, and
+  stream-based protocols.
+
+license:         Apache-2.0
+license-file:    LICENSE
+copyright:       (c) 2026 Paolo Veronelli
+author:          Paolo Veronelli
+maintainer:      paolo.veronelli@gmail.com
+category:        Network
+build-type:      Simple
+extra-doc-files: README.md
+
+common language
+  default-language:   GHC2021
+  default-extensions:
+    DerivingStrategies
+    LambdaCase
+    OverloadedStrings
+    StrictData
+
+common opts-lib
+  ghc-options:
+    -Wall -Werror -Wunused-imports -Wunused-packages
+    -Wmissing-export-lists -Wname-shadowing
+    -Wredundant-constraints
+
+common opts-exe
+  ghc-options:
+    -Wall -Werror -Wunused-imports -Wunused-packages
+    -Wmissing-export-lists -threaded -rtsopts
+    -with-rtsopts=-N
+
+library
+  import:          language, opts-lib
+  hs-source-dirs:  lib
+  exposed-modules:
+    Libp2p
+    Libp2p.FFI
+    Libp2p.Node
+    Libp2p.Protocol
+    Libp2p.Stream
+    Libp2p.Types
+
+  build-depends:
+    , base        >=4.18 && <5
+    , bytestring  >=0.11 && <0.13
+    , text        >=2.0  && <2.2
+
+  extra-libraries: haskell_libp2p
+
+test-suite integration-tests
+  import:             language, opts-lib
+  type:               exitcode-stdio-1.0
+  hs-source-dirs:     test/spec
+  main-is:            Main.hs
+  ghc-options:        -threaded -rtsopts -with-rtsopts=-N
+  build-depends:
+    , base
+    , bytestring
+    , haskell-libp2p
+    , hspec          >=2.10 && <3
+    , text
+
+  extra-libraries:    haskell_libp2p
+  build-tool-depends: hspec-discover:hspec-discover
