@@ -284,7 +284,7 @@ pub unsafe extern "C" fn libp2p_node_listen(
         return -1;
     }
 
-    match RUNTIME.block_on(async { reply_rx.await }) {
+    match RUNTIME.block_on(reply_rx) {
         Ok(Ok(_)) => 0,
         Ok(Err(e)) => {
             set_last_error(&e);
@@ -336,7 +336,7 @@ pub unsafe extern "C" fn libp2p_node_dial(
         return -1;
     }
 
-    match RUNTIME.block_on(async { reply_rx.await }) {
+    match RUNTIME.block_on(reply_rx) {
         Ok(Ok(())) => 0,
         Ok(Err(e)) => {
             set_last_error(&e);
@@ -571,7 +571,7 @@ pub unsafe extern "C" fn libp2p_stream_read(
         return 0; // Stream closed = EOF
     }
 
-    match RUNTIME.block_on(async { reply_rx.await }) {
+    match RUNTIME.block_on(reply_rx) {
         Ok(Ok(data)) => {
             if data.is_empty() {
                 return 0; // EOF
@@ -616,7 +616,7 @@ pub unsafe extern "C" fn libp2p_stream_write(
         return -1;
     }
 
-    match RUNTIME.block_on(async { reply_rx.await }) {
+    match RUNTIME.block_on(reply_rx) {
         Ok(Ok(())) => 0,
         Ok(Err(e)) => {
             set_last_error(&e);
