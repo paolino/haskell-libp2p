@@ -61,10 +61,10 @@ withNode f = do
     if raw == nullPtr
         then do
             err <- getLastError
-            throwIO
-                $ userError
-                $ "Failed to create node: "
-                <> err
+            throwIO $
+                userError $
+                    "Failed to create node: "
+                        <> err
         else do
             fp <-
                 newForeignPtr
@@ -72,8 +72,7 @@ withNode f = do
                     raw
             f (Node fp)
 
-foreign import ccall
-    "& libp2p_node_free"
+foreign import ccall "& libp2p_node_free"
     ffiNodeFinalizer
         :: Foreign.ForeignPtr.FinalizerPtr FFI.NodeHandle
 
@@ -83,8 +82,8 @@ peerId (Node fp) = withForeignPtr fp $ \ptr -> do
     cstr <- FFI.c_node_peer_id ptr
     if cstr == nullPtr
         then
-            throwIO
-                $ userError "Failed to get peer ID"
+            throwIO $
+                userError "Failed to get peer ID"
         else PeerId . T.pack <$> peekCString cstr
 
 -- | Start listening on a multiaddress.
@@ -92,15 +91,15 @@ listen :: Node -> Multiaddr -> IO ()
 listen (Node fp) (Multiaddr addr) =
     withForeignPtr fp $ \ptr ->
         withCString (T.unpack addr) $ \caddr ->
-            checkRC
-                $ fromIntegral
-                <$> FFI.c_node_listen ptr caddr
+            checkRC $
+                fromIntegral
+                    <$> FFI.c_node_listen ptr caddr
 
 -- | Dial a remote peer at a multiaddress.
 dial :: Node -> Multiaddr -> IO ()
 dial (Node fp) (Multiaddr addr) =
     withForeignPtr fp $ \ptr ->
         withCString (T.unpack addr) $ \caddr ->
-            checkRC
-                $ fromIntegral
-                <$> FFI.c_node_dial ptr caddr
+            checkRC $
+                fromIntegral
+                    <$> FFI.c_node_dial ptr caddr

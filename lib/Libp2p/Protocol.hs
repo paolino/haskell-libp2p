@@ -36,10 +36,11 @@ getLastError = do
         then pure "Unknown error"
         else peekCString cstr
 
--- | Register a protocol handler on a node.
--- After registration, incoming streams for this protocol
--- can be accepted with 'acceptStream' or
--- 'acceptStreamBlocking'.
+{- | Register a protocol handler on a node.
+After registration, incoming streams for this protocol
+can be accepted with 'acceptStream' or
+'acceptStreamBlocking'.
+-}
 registerProtocol :: Node -> T.Text -> IO ()
 registerProtocol (Node fp) proto =
     withForeignPtr fp $ \ptr ->
@@ -52,14 +53,15 @@ registerProtocol (Node fp) proto =
             if rc /= 0
                 then do
                     err <- getLastError
-                    throwIO
-                        $ userError
-                        $ "Failed to register protocol: "
-                        <> err
+                    throwIO $
+                        userError $
+                            "Failed to register protocol: "
+                                <> err
                 else pure ()
 
--- | Non-blocking poll for an incoming stream.
--- Returns 'Nothing' if no stream is available.
+{- | Non-blocking poll for an incoming stream.
+Returns 'Nothing' if no stream is available.
+-}
 acceptStream :: Node -> T.Text -> IO (Maybe Stream)
 acceptStream (Node fp) proto =
     withForeignPtr fp $ \ptr ->
@@ -86,10 +88,10 @@ acceptStreamBlocking (Node fp) proto =
             if raw == nullPtr
                 then do
                     err <- getLastError
-                    throwIO
-                        $ userError
-                        $ "Failed to accept stream: "
-                        <> err
+                    throwIO $
+                        userError $
+                            "Failed to accept stream: "
+                                <> err
                 else do
                     sfp <-
                         newForeignPtr
@@ -111,10 +113,10 @@ openStream (Node fp) (PeerId pid) proto =
                 if raw == nullPtr
                     then do
                         err <- getLastError
-                        throwIO
-                            $ userError
-                            $ "Failed to open stream: "
-                            <> err
+                        throwIO $
+                            userError $
+                                "Failed to open stream: "
+                                    <> err
                     else do
                         sfp <-
                             newForeignPtr
@@ -122,7 +124,6 @@ openStream (Node fp) (PeerId pid) proto =
                                 raw
                         pure $ Stream sfp
 
-foreign import ccall
-    "& libp2p_stream_free"
+foreign import ccall "& libp2p_stream_free"
     ffiStreamFinalizer
         :: Foreign.ForeignPtr.FinalizerPtr FFI.StreamHandle
