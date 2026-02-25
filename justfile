@@ -10,6 +10,7 @@ build: build-rust
 test: build-rust
     LD_LIBRARY_PATH="$(pwd)/rust/target/release:$LD_LIBRARY_PATH" \
         cabal test integration-tests -O0 \
+        --enable-tests \
         --test-show-details=direct \
         --extra-lib-dirs="$(pwd)/rust/target/release"
 
